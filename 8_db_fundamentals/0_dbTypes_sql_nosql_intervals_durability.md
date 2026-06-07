@@ -1,441 +1,800 @@
-This is a key concept in **database internals** and is often asked in HLD interviews.
-
-Let's use PostgreSQL/MySQL InnoDB style architecture.
+These are **core database concepts** that come up repeatedly in **System Design (HLD) interviews**. The goal is not to become a DBA, but to understand **when to choose what and why**.
 
 ---
 
-# First Understand: Why Not Write Directly To Disk?
+# 1. Database Types
 
-Disk I/O is slow.
+Databases can be broadly divided into:
 
-Approximate speeds:
+## A. Relational Databases (SQL)
 
-| Storage   | Latency |
-| --------- | ------- |
-| CPU Cache | ~1 ns   |
-| RAM       | ~100 ns |
-| SSD       | ~100 µs |
-| HDD       | ~10 ms  |
+Store data in tables.
 
-Disk is **thousands to millions of times slower** than memory.
+Example:
 
-If every update waited for a disk write:
+### Users Table
+
+| id | name  | email                                     |
+| -- | ----- | ----------------------------------------- |
+| 1  | John  | [john@gmail.com](mailto:john@gmail.com)   |
+| 2  | Alice | [alice@gmail.com](mailto:alice@gmail.com) |
+
+### Orders Table
+
+| id  | user_id | amount |
+| --- | ------- | ------ |
+| 101 | 1       | 500    |
+| 102 | 2       | 1000   |
+
+Relationship:
+
+```
+User (1) ------> (Many) Orders
+```
+
+Examples:
+
+* MySQL
+* PostgreSQL
+* Oracle
+* SQL Server
+
+Used when:
+
+* Data is structured
+* Need joins
+* Need strong consistency
+* Financial systems
+
+---
+
+## B. NoSQL Databases
+
+Designed for scale and flexibility.
+
+Several types exist.
+
+---
+
+### 1. Key-Value Database
+
+Stores:
+
+```
+key -> value
+```
+
+Example:
+
+```
+user:101 -> {name:"John", age:25}
+```
+
+Examples:
+
+* Redis
+* DynamoDB
+
+Used for:
+
+* Caching
+* Sessions
+* User preferences
+
+Complexity:
+
+```
+Read = O(1)
+Write = O(1)
+```
+
+---
+
+### 2. Document Database
+
+Stores JSON-like documents.
+
+Example:
+
+```json
+{
+  "id": 101,
+  "name": "John",
+  "skills": ["Java","AWS"]
+}
+```
+
+Examples:
+
+* MongoDB
+* Couchbase
+
+Used when:
+
+* Schema changes frequently
+* Product catalogs
+* User profiles
+
+---
+
+### 3. Column-Family Database
+
+Stores data by columns instead of rows.
+
+Examples:
+
+* Cassandra
+* HBase
+
+Good for:
+
+* Huge datasets
+* Time-series
+* Analytics
+
+---
+
+### 4. Graph Database
+
+Stores nodes and relationships.
+
+Example:
+
+```
+John --> Friend --> Alice
+Alice --> Friend --> Bob
+```
+
+Examples:
+
+* Neo4j
+* Amazon Neptune
+
+Used for:
+
+* Social networks
+* Recommendations
+* Fraud detection
+
+---
+
+# Interview Answer
+
+If interviewer asks:
+
+### Which DB for Banking?
+
+Answer:
+
+```
+SQL Database
+(PostgreSQL/MySQL)
+
+Reason:
+- ACID transactions
+- Strong consistency
+```
+
+---
+
+### Which DB for Instagram Feed?
+
+Answer:
+
+```
+NoSQL
+
+Reason:
+- Massive scale
+- Flexible schema
+- Fast writes
+```
+
+---
+
+# 2. SQL vs NoSQL
+
+One of the most common HLD questions.
+
+---
+
+## SQL
+
+### Characteristics
+
+* Tables
+* Fixed schema
+* ACID compliant
+* Joins supported
+
+Example:
 
 ```sql
-UPDATE users
-SET name='Jay'
-WHERE id=1;
-```
-
-the database would become very slow.
-
-So databases use:
-
-```
-RAM (fast)
-+
-WAL Log (durability)
-+
-Background Disk Flush
+SELECT *
+FROM Users
+JOIN Orders
+ON Users.id=Orders.user_id;
 ```
 
 ---
 
-# Database Components
+### Advantages
 
-```
-                Client
-                   |
-                   v
-             SQL Engine
-                   |
-                   v
-        +-------------------+
-        |   Buffer Pool     |
-        |  (RAM Pages)      |
-        +-------------------+
-                   |
-                   v
-          WAL / Redo Log
-                   |
-                   v
-             Disk Storage
+Strong consistency
+
+Complex queries
+
+Transactions
+
+Data integrity
+
+---
+
+### Disadvantages
+
+Harder horizontal scaling
+
+Schema changes difficult
+
+---
+
+## NoSQL
+
+### Characteristics
+
+* Flexible schema
+* Horizontally scalable
+* High throughput
+
+Example:
+
+```json
+{
+  "userId":101,
+  "name":"John"
+}
 ```
 
 ---
 
-# Step 1: Read Page Into Memory
+### Advantages
 
-Suppose table page on disk contains:
+Easy scaling
+
+Handles huge traffic
+
+Fast writes
+
+---
+
+### Disadvantages
+
+Often weaker consistency
+
+Joins difficult
+
+Complex transactions limited
+
+---
+
+## Quick Comparison
+
+| Feature      | SQL       | NoSQL             |
+| ------------ | --------- | ----------------- |
+| Schema       | Fixed     | Flexible          |
+| Scaling      | Vertical  | Horizontal        |
+| Transactions | Strong    | Limited           |
+| Consistency  | Strong    | Eventual possible |
+| Joins        | Excellent | Difficult         |
+| Examples     | MySQL     | MongoDB           |
+
+---
+
+# HLD Rule
+
+If data correctness is critical:
 
 ```
-User 1 -> Balance = 1000
+SQL
 ```
 
-Disk:
+If scale is critical:
 
 ```
-Page P1
+NoSQL
 ```
 
-When query arrives:
+Many real systems use both.
 
-```sql
-UPDATE accounts
-SET balance=800
-WHERE id=1;
-```
-
-Database loads page into RAM.
+Example:
 
 ```
-Disk Page P1
-      |
-      v
-Buffer Pool Page P1
+Instagram
+
+MySQL -> User metadata
+
+Redis -> Cache
+
+Cassandra -> Feed storage
 ```
 
 ---
 
-# Step 2: Write WAL First
+# 3. ACID Transactions
 
-Before changing actual data page:
-
-Database creates log entry.
-
-```
-UPDATE account 1
-1000 -> 800
-```
-
-Written to WAL.
-
-```
-WAL File
----------
-LSN 101:
-Account 1
-1000 -> 800
----------
-```
-
-Flushed to disk immediately.
-
-This guarantees durability.
+ACID ensures database reliability.
 
 ---
 
-# Step 3: Commit Success
+## A = Atomicity
 
-After WAL reaches disk:
+Transaction happens completely or not at all.
 
-```sql
-COMMIT;
-```
+Example:
 
-Database tells client:
-
-```
-Transaction successful
-```
-
-Notice:
-
-**Actual table page may still not be on disk.**
-
-Only WAL is guaranteed on disk.
-
----
-
-# Step 4: Memory Update (Your Question)
-
-Now database updates page inside Buffer Pool.
+Transfer ₹100.
 
 Before:
 
 ```
-Buffer Pool Page P1
-
-Account1 = 1000
+A = 1000
+B = 500
 ```
 
-After:
+Steps:
 
 ```
-Buffer Pool Page P1
-
-Account1 = 800
+A -= 100
+B += 100
 ```
 
-This page is now called:
+If server crashes after first step:
 
 ```
-Dirty Page
+A = 900
+B = 500
 ```
 
-Meaning:
+Wrong.
+
+Atomicity ensures:
 
 ```
-RAM version != Disk version
+Either both happen
+or neither happens
 ```
 
 ---
 
-## What is a Dirty Page?
+## C = Consistency
 
-Disk:
+Database always remains valid.
 
-```
-Account1 = 1000
-```
-
-RAM:
+Rule:
 
 ```
-Account1 = 800
+A + B = 1500
 ```
 
-Different values.
-
-Therefore:
+After transaction:
 
 ```
-Dirty Page
+900 + 600 = 1500
 ```
 
-Needs flushing later.
+Still valid.
 
 ---
 
-# Step 5: Continue Serving Requests
+## I = Isolation
 
-Now all future reads can use RAM.
+Concurrent transactions should not interfere.
+
+---
+
+Without Isolation
+
+T1:
+
+```
+Withdraw 100
+```
+
+T2:
+
+```
+Read balance
+```
+
+T2 may see partial updates.
+
+Isolation prevents this.
+
+---
+
+## D = Durability
+
+Once committed:
+
+```
+Data survives crash
+```
+
+Even if power goes off.
+
+Database recovers committed data.
+
+---
+
+## ACID Example
+
+Bank Transfer:
+
+```
+BEGIN
+
+A -= 100
+B += 100
+
+COMMIT
+```
+
+After commit:
+
+```
+Guaranteed permanent
+```
+
+---
+
+# 4. Database Internals
+
+Interviewers sometimes ask:
+
+> What happens when INSERT is executed?
+
+---
+
+## Step 1: Query Arrives
 
 ```sql
-SELECT balance
-FROM accounts
-WHERE id=1;
+INSERT INTO users VALUES(1,'John');
 ```
 
-returns:
-
-```
-800
-```
-
-from memory.
-
-No disk access required.
-
-Very fast.
+Client sends query.
 
 ---
 
-# Step 6: Background Flush (Checkpoint)
+## Step 2: Parser
 
-Every few seconds/minutes:
+Checks syntax.
 
-Background thread wakes up.
+```sql
+INSERT INTO ...
+```
+
+Valid?
+
+If no:
+
+```
+Syntax Error
+```
+
+---
+
+## Step 3: Optimizer
+
+Chooses best execution plan.
+
+For SELECT:
+
+```
+Use index?
+Use full scan?
+```
+
+---
+
+## Step 4: Storage Engine
+
+Actual component storing data.
 
 Examples:
 
 ```
-Postgres -> Checkpointer
-MySQL -> Page Cleaner
-```
-
-It scans dirty pages.
-
-```
-Dirty Page P1
-```
-
-and writes them to disk.
-
----
-
-Before Flush
-
-Disk:
-
-```
-1000
-```
-
-RAM:
-
-```
-800
+MySQL -> InnoDB
+Postgres -> Heap Storage
 ```
 
 ---
 
-After Flush
+## Step 5: Write Ahead Log (WAL)
 
-Disk:
-
-```
-800
-```
-
-RAM:
+Before writing data:
 
 ```
-800
+Log entry written
 ```
 
-Page becomes clean.
+This is crucial.
+
+Example:
+
+```
+INSERT user 101
+```
+
+Log stores:
+
+```
+Operation details
+```
 
 ---
 
-# What If Crash Happens Before Flush?
+## Step 6: Memory Update
+
+Data written into:
+
+```
+Buffer Pool
+```
+
+(in-memory pages)
+
+Fast operation.
+
+---
+
+## Step 7: Disk Write Later
+
+Background process flushes data.
+
+```
+RAM -> Disk
+```
+
+---
+
+### Simplified Flow
+
+```
+Query
+  ↓
+Parser
+  ↓
+Optimizer
+  ↓
+WAL
+  ↓
+Buffer Pool
+  ↓
+Disk
+```
+
+---
+
+# 5. How Databases Guarantee Durability
+
+One of the favorite HLD questions.
+
+Question:
+
+> If data is first written to memory, what if machine crashes?
+
+Answer:
+
+```
+Write-Ahead Logging (WAL)
+```
+
+---
+
+## Problem
 
 Suppose:
 
-```
-WAL written ✓
-Page flush not done ✗
+```sql
+INSERT USER 101
 ```
 
-Then power failure occurs.
+Database stores only in RAM.
+
+Crash occurs.
+
+Data lost.
 
 ---
 
-Disk page:
+## Solution: WAL
+
+Before modifying data:
+
+Database writes operation to log file.
 
 ```
-1000
+WAL Disk
 ```
 
-WAL:
+Example:
 
 ```
-1000 -> 800
+INSERT USER 101
 ```
 
-exists on disk.
+stored in WAL.
 
 ---
+
+### Flow
+
+```
+Write request
+     ↓
+WAL disk write
+     ↓
+Commit success
+     ↓
+Memory update
+     ↓
+Disk flush later
+```
+
+---
+
+## Crash Happens
+
+Suppose crash occurs.
+
+Data page not written yet.
+
+But WAL exists.
+
+Recovery process reads WAL.
+
+```
+Replay operations
+```
+
+Data restored.
+
+---
+
+## Recovery Example
+
+WAL contains:
+
+```
+INSERT USER 101
+UPDATE USER 102
+DELETE USER 103
+```
 
 Database restarts.
 
-Recovery process runs.
+Reads WAL.
 
-Reads WAL:
+Replays operations.
 
-```
-LSN101:
-1000 -> 800
-```
-
-Replays change.
-
-Disk becomes:
-
-```
-800
-```
-
-Data recovered.
-
-This is why WAL is sufficient for durability.
+Database becomes consistent.
 
 ---
 
-# Timeline Example
+# Checkpointing
 
-### T0
-
-Disk:
+If WAL grows forever:
 
 ```
-1000
+Huge recovery time
 ```
 
-RAM:
+Database periodically creates checkpoints.
+
+Checkpoint:
 
 ```
-1000
+Current memory pages
+→ flushed to disk
 ```
+
+Then old WAL can be discarded.
 
 ---
 
-### T1 Update Query
+### Recovery Process
 
-```sql
-UPDATE balance=800
+```
+Disk Data
+   +
+Checkpoint
+   +
+WAL
+   =
+Latest State
 ```
 
 ---
 
-### T2 WAL Written
+# Real Interview Example
 
-Disk:
+### Q: Why is MySQL durable?
 
-```
-WAL:
-1000 -> 800
-```
-
----
-
-### T3 Commit
-
-Client gets:
+Answer:
 
 ```
-SUCCESS
+MySQL InnoDB uses:
+1. Redo Log (WAL)
+2. Buffer Pool
+3. Checkpoints
+
+Transaction is considered committed only after redo log is safely persisted.
+
+During crash recovery, redo logs are replayed to restore committed transactions.
 ```
 
 ---
 
-### T4 Memory Updated
+# HLD Interview Summary Sheet
 
-RAM:
+## Database Types
 
-```
-800
-```
-
-Disk page:
-
-```
-1000
-```
-
-Dirty page exists.
+* SQL
+* Key-Value
+* Document
+* Column-Family
+* Graph
 
 ---
 
-### T5 Crash
+## SQL vs NoSQL
 
-No problem.
+SQL:
 
-Recovery uses WAL.
+* Strong consistency
+* Joins
+* ACID
+
+NoSQL:
+
+* Scale
+* Flexible schema
+* High throughput
 
 ---
 
-### T6 Restart
+## ACID
 
-Replay WAL.
+* Atomicity → all or nothing
+* Consistency → valid state
+* Isolation → no interference
+* Durability → survives crash
 
-Disk:
+---
+
+## Database Internals
 
 ```
-800
+Query
+ → Parser
+ → Optimizer
+ → WAL
+ → Buffer Pool
+ → Disk
 ```
 
 ---
 
-### T7 Normal Operation
+## Durability
 
-Background flush writes page permanently.
+```
+WAL / Redo Log
+Checkpointing
+Crash Recovery
+```
 
----
+These concepts are enough to confidently answer most database-related questions in HLD interviews at companies like Amazon, Flipkart, Uber, Swiggy, Walmart, PayPal, and similar product companies.
 
-# Interview One-Liner
-
-**Data pages are first updated in the Buffer Pool (RAM). These become dirty pages. A background process later flushes dirty pages to disk. Durability is guaranteed because the WAL/redo log was already persisted before the transaction committed.**
 
 
 This is a key concept in **database internals** and is often asked in HLD interviews.
